@@ -57,6 +57,9 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define CLK_SYNC_IN_Pin GPIO_PIN_6
+#define CLK_SYNC_IN_GPIO_Port GPIOB
+#define CLK_SYNC_IN_EXTI_IRQn EXTI6_IRQn
 
 /* USER CODE BEGIN Private defines */
 

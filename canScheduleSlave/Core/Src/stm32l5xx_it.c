@@ -55,9 +55,8 @@
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
-extern PCD_HandleTypeDef hpcd_USB_FS;
 extern FDCAN_HandleTypeDef hfdcan1;
-//extern TIM_HandleTypeDef htim6;
+extern TIM_HandleTypeDef htim2;
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -201,6 +200,20 @@ void SysTick_Handler(void)
 /******************************************************************************/
 
 /**
+  * @brief This function handles EXTI line6 interrupt.
+  */
+void EXTI6_IRQHandler(void)
+{
+  /* USER CODE BEGIN EXTI6_IRQn 0 */
+
+  /* USER CODE END EXTI6_IRQn 0 */
+  HAL_GPIO_EXTI_IRQHandler(CLK_SYNC_IN_Pin);
+  /* USER CODE BEGIN EXTI6_IRQn 1 */
+
+  /* USER CODE END EXTI6_IRQn 1 */
+}
+
+/**
   * @brief This function handles FDCAN1 interrupt 0.
   */
 void FDCAN1_IT0_IRQHandler(void)
@@ -215,31 +228,17 @@ void FDCAN1_IT0_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles TIM6 global interrupt.
+  * @brief This function handles TIM2 global interrupt.
   */
-//void TIM6_IRQHandler(void)
-//{
-  /* USER CODE BEGIN TIM6_IRQn 0 */
-
-  /* USER CODE END TIM6_IRQn 0 */
-//  HAL_TIM_IRQHandler(&htim6);
-  /* USER CODE BEGIN TIM6_IRQn 1 */
-
-  /* USER CODE END TIM6_IRQn 1 */
-//}
-
-/**
-  * @brief This function handles USB FS global interrupt / USB FS wake-up interrupt through EXTI line 34.
-  */
-void USB_FS_IRQHandler(void)
+void TIM2_IRQHandler(void)
 {
-  /* USER CODE BEGIN USB_FS_IRQn 0 */
+  /* USER CODE BEGIN TIM2_IRQn 0 */
 
-  /* USER CODE END USB_FS_IRQn 0 */
-  HAL_PCD_IRQHandler(&hpcd_USB_FS);
-  /* USER CODE BEGIN USB_FS_IRQn 1 */
+  /* USER CODE END TIM2_IRQn 0 */
+  HAL_TIM_IRQHandler(&htim2);
+  /* USER CODE BEGIN TIM2_IRQn 1 */
 
-  /* USER CODE END USB_FS_IRQn 1 */
+  /* USER CODE END TIM2_IRQn 1 */
 }
 
 /* USER CODE BEGIN 1 */

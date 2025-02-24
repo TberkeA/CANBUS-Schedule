@@ -18,11 +18,11 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "usbd_cdc_if.h"
+#include <stdio.h>
+#include <string.h> // Include for strlen
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -43,8 +43,9 @@
 /* Private variables ---------------------------------------------------------*/
 FDCAN_HandleTypeDef hfdcan1;
 
+UART_HandleTypeDef hlpuart1;
+
 TIM_HandleTypeDef htim2;
-TIM_HandleTypeDef htim6;
 
 /* USER CODE BEGIN PV */
 FDCAN_RxHeaderTypeDef canrxheader;
@@ -57,6 +58,10 @@ FDCAN_FilterTypeDef sFilterConfig;
 uint32_t timestamp_this;
 uint32_t timestamp_master;
 
+volatile char lpuart_buffer[32];
+
+volatile uint32_t clock_value;
+
 char message[] = "Message\0";
 
 /* USER CODE END PV */
@@ -64,31 +69,23 @@ char message[] = "Message\0";
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_FDCAN1_Init(void);
 static void MX_ICACHE_Init(void);
+static void MX_FDCAN1_Init(void);
+static void MX_LPUART1_UART_Init(void);
 static void MX_TIM2_Init(void);
-//static void MX_TIM6_Init(void); //VCOM Issues --Tarik
 /* USER CODE BEGIN PFP */
-
+void HAL_GPIO_EXTI_Rising_Callback(uint16_t GPIO_Pin);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-//Commented out due to VCOM tranasfer issues --Tarik
-//void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim){
-//	if(htim == &htim6){
-//			if(CDC_Transmit_FS(htim2->Instance->CNT,2*size_t(uint32_t))!=USBD_OK){
-//				Error_Handler();
-//			}
-//		}
-//}
-
 static inline void correctTimer(uint32_t update) {
-	htim2.Instance->CNT += update + 2;
+	htim2.Instance->CNT += update;
 }
 
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs) {
+
 	if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) != RESET) {
 		if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &canrxheader,
 				(uint8_t*) canRXdata) != HAL_OK) {
@@ -97,12 +94,11 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 
 		if (canrxheader.Identifier == 0x01) { //SYNC
 			//timestamp_this_prev = timestamp_this; //For drift correction --Tarik
+
 			timestamp_this = htim2.Instance->CNT;
-		}
-		else if (canrxheader.Identifier == 0x02) {			//FUP
+		} else if (canrxheader.Identifier == 0x02) {			//FUP
 			timestamp_master = canRXdata[0];
 			//timestamp_master_prev = timestamp_master; //For drift correction --Tarik
-
 			correctTimer(timestamp_master - timestamp_this);
 
 			//time_diff_this = timestamp_this - timestamp_this_prev; //For drift correction --Tarik
@@ -112,13 +108,7 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 
 			//if(drift_up) htim3.Init.Period = 1 + ((time_diff_master)/(time_diff_this - time_diff_master));
 			//else htim3.Init.Period = ((time_diff_master)/(time_diff_master - time_diff_this)) - 1; //Drift correction end --Tarik
-
-			canTXdata[0] = timestamp_this - timestamp_master;
-			HAL_FDCAN_AddMessageToTxFifoQ(hfdcan, &cantxheader, //CAN message to transfer time difference, MUST be improved --Tarik
-					(uint8_t*) canTXdata);
-			HAL_Delay(100);
 		}
-
 
 		if (HAL_FDCAN_ActivateNotification(hfdcan, //Enable new message receive for AUTOSAR
 				FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK) {
@@ -159,14 +149,13 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_FDCAN1_Init();
   MX_ICACHE_Init();
+  MX_FDCAN1_Init();
+  MX_LPUART1_UART_Init();
   MX_TIM2_Init();
-  MX_USB_Device_Init();
-//  MX_TIM6_Init(); Related to VCOM data transfer --Tarik
   /* USER CODE BEGIN 2 */
 
-  	cantxheader.Identifier = 0x10;
+	cantxheader.Identifier = 0x10;
 	cantxheader.DataLength = FDCAN_DLC_BYTES_8;
 	cantxheader.FDFormat = FDCAN_FD_CAN;
 	cantxheader.IdType = FDCAN_STANDARD_ID;
@@ -176,7 +165,6 @@ int main(void)
 	cantxheader.BitRateSwitch = FDCAN_BRS_ON;
 	cantxheader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
 
-
 	sFilterConfig.IdType = FDCAN_STANDARD_ID;
 	sFilterConfig.FilterIndex = 0;
 	sFilterConfig.FilterType = FDCAN_FILTER_MASK;
@@ -184,32 +172,21 @@ int main(void)
 	sFilterConfig.FilterID1 = 0x10;
 	sFilterConfig.FilterID2 = 0x00;
 
-	if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK)
-	  {
-	    /* Filter configuration Error */
-	    Error_Handler();
-	  }
+	if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK) {
+		/* Filter configuration Error */
+		Error_Handler();
+	}
 
-   //if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, FDCAN_REJECT, FDCAN_REJECT, FDCAN_FILTER_REMOTE, FDCAN_FILTER_REMOTE) != HAL_OK)
-	// {
-    //Error_Handler();}
-
-
-   HAL_TIM_Base_Start(&htim2);
-	//HAL_TIM_Base_Start(&htim3); //For drift correction --Tarik
-//   HAL_TIM_Base_Start_IT(&htim6); //For VCOM data transfer --Tarik
+	HAL_TIM_Base_Start(&htim2);
 
 	if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK) {
 		Error_Handler();
 	}
-	if (HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE,
-			0) != HAL_OK) {
+	if (HAL_FDCAN_ActivateNotification(&hfdcan1,
+	FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK) {
 		/* Notification Error */
 		Error_Handler();
 	}
-
-
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -233,7 +210,7 @@ void SystemClock_Config(void)
 
   /** Configure the main internal regulator output voltage
   */
-  if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK)
+  if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE0) != HAL_OK)
   {
     Error_Handler();
   }
@@ -241,17 +218,16 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48|RCC_OSCILLATORTYPE_MSI;
-  RCC_OscInitStruct.HSI48State = RCC_HSI48_ON;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_MSI;
   RCC_OscInitStruct.MSIState = RCC_MSI_ON;
   RCC_OscInitStruct.MSICalibrationValue = RCC_MSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_6;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_MSI;
   RCC_OscInitStruct.PLL.PLLM = 1;
-  RCC_OscInitStruct.PLL.PLLN = 20;
+  RCC_OscInitStruct.PLL.PLLN = 50;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV7;
-  RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV4;
+  RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
   RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -267,7 +243,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
   {
     Error_Handler();
   }
@@ -282,6 +258,7 @@ static void MX_FDCAN1_Init(void)
 {
 
   /* USER CODE BEGIN FDCAN1_Init 0 */
+
   /* USER CODE END FDCAN1_Init 0 */
 
   /* USER CODE BEGIN FDCAN1_Init 1 */
@@ -291,17 +268,17 @@ static void MX_FDCAN1_Init(void)
   hfdcan1.Init.ClockDivider = FDCAN_CLOCK_DIV1;
   hfdcan1.Init.FrameFormat = FDCAN_FRAME_FD_BRS;
   hfdcan1.Init.Mode = FDCAN_MODE_NORMAL;
-  hfdcan1.Init.AutoRetransmission = ENABLE;
+  hfdcan1.Init.AutoRetransmission = DISABLE;
   hfdcan1.Init.TransmitPause = DISABLE;
   hfdcan1.Init.ProtocolException = DISABLE;
-  hfdcan1.Init.NominalPrescaler = 2;
-  hfdcan1.Init.NominalSyncJumpWidth = 2;
-  hfdcan1.Init.NominalTimeSeg1 = 7;
-  hfdcan1.Init.NominalTimeSeg2 = 2;
-  hfdcan1.Init.DataPrescaler = 2;
-  hfdcan1.Init.DataSyncJumpWidth = 2;
-  hfdcan1.Init.DataTimeSeg1 = 7;
-  hfdcan1.Init.DataTimeSeg2 = 2;
+  hfdcan1.Init.NominalPrescaler = 4;
+  hfdcan1.Init.NominalSyncJumpWidth = 5;
+  hfdcan1.Init.NominalTimeSeg1 = 19;
+  hfdcan1.Init.NominalTimeSeg2 = 5;
+  hfdcan1.Init.DataPrescaler = 4;
+  hfdcan1.Init.DataSyncJumpWidth = 5;
+  hfdcan1.Init.DataTimeSeg1 = 19;
+  hfdcan1.Init.DataTimeSeg2 = 5;
   hfdcan1.Init.StdFiltersNbr = 1;
   hfdcan1.Init.ExtFiltersNbr = 0;
   hfdcan1.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
@@ -348,6 +325,54 @@ static void MX_ICACHE_Init(void)
 }
 
 /**
+  * @brief LPUART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_LPUART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN LPUART1_Init 0 */
+
+  /* USER CODE END LPUART1_Init 0 */
+
+  /* USER CODE BEGIN LPUART1_Init 1 */
+
+  /* USER CODE END LPUART1_Init 1 */
+  hlpuart1.Instance = LPUART1;
+  hlpuart1.Init.BaudRate = 115200;
+  hlpuart1.Init.WordLength = UART_WORDLENGTH_8B;
+  hlpuart1.Init.StopBits = UART_STOPBITS_1;
+  hlpuart1.Init.Parity = UART_PARITY_NONE;
+  hlpuart1.Init.Mode = UART_MODE_TX_RX;
+  hlpuart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  hlpuart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  hlpuart1.Init.ClockPrescaler = UART_PRESCALER_DIV1;
+  hlpuart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  hlpuart1.FifoMode = UART_FIFOMODE_DISABLE;
+  if (HAL_UART_Init(&hlpuart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetTxFifoThreshold(&hlpuart1, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetRxFifoThreshold(&hlpuart1, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_DisableFifoMode(&hlpuart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN LPUART1_Init 2 */
+
+  /* USER CODE END LPUART1_Init 2 */
+
+}
+
+/**
   * @brief TIM2 Initialization Function
   * @param None
   * @retval None
@@ -366,7 +391,7 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 3;
+  htim2.Init.Prescaler = 9;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim2.Init.Period = 4000000000;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -393,69 +418,44 @@ static void MX_TIM2_Init(void)
 }
 
 /**
-  * @brief TIM6 Initialization Function
-  * @param None
-  * @retval None
-  */
-
-/*Commented out for now -- Tarik
-  static void MX_TIM6_Init(void)
-{
-
-  /* USER CODE BEGIN TIM6_Init 0 */
-
-  /* USER CODE END TIM6_Init 0 */
-
-  //TIM_MasterConfigTypeDef sMasterConfig = {0};
-
-  /* USER CODE BEGIN TIM6_Init 1 */
-
-  /* USER CODE END TIM6_Init 1 */
-  //htim6.Instance = TIM6;
-  //htim6.Init.Prescaler = 159;
-  //htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  //htim6.Init.Period = 49999;
-  //htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  //if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
-  //{
-   // Error_Handler();
-  //}
-  //sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  //sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  //if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
-  //{
-  //Error_Handler();
-  //}
-  /* USER CODE BEGIN TIM6_Init 2 */
-
-  /* USER CODE END TIM6_Init 2 */
-
-//}
-
-
-
-
-/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
   */
 static void MX_GPIO_Init(void)
 {
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
 /* USER CODE BEGIN MX_GPIO_Init_1 */
 /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOG_CLK_ENABLE();
+  HAL_PWREx_EnableVddIO2();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  /*Configure GPIO pin : CLK_SYNC_IN_Pin */
+  GPIO_InitStruct.Pin = CLK_SYNC_IN_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(CLK_SYNC_IN_GPIO_Port, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI6_IRQn, 2, 0);
+  HAL_NVIC_EnableIRQ(EXTI6_IRQn);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-
+void HAL_GPIO_EXTI_Rising_Callback(uint16_t GPIO_Pin) {
+	if (GPIO_Pin == CLK_SYNC_IN_Pin) {
+		sprintf(lpuart_buffer, "%lu\r\n", htim2.Instance->CNT);
+		HAL_UART_Transmit(&hlpuart1, (uint8_t*) lpuart_buffer, strlen(lpuart_buffer), 64);
+	}
+}
 /* USER CODE END 4 */
 
 /**
