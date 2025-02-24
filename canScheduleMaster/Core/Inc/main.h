@@ -49,6 +49,8 @@ extern "C" {
 
 /* USER CODE END EM */
 
+void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
+
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
 
@@ -57,6 +59,11 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define CLK_SYNC_IN_Pin GPIO_PIN_9
+#define CLK_SYNC_IN_GPIO_Port GPIOA
+#define CLK_SYNC_IN_EXTI_IRQn EXTI9_5_IRQn
+#define CLK_SYNC_OUT_Pin GPIO_PIN_6
+#define CLK_SYNC_OUT_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 
